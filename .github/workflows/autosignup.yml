@@ -1,7 +1,9 @@
 name: SportBit veilige test
 
 on:
-  workflow_dispatch:
+schedule:
+  - cron: "*/5 * * * *"
+workflow_di*patch::
 
 jobs:
   diagnostic:
