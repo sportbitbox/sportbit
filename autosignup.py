@@ -1,274 +1,170 @@
 #!/usr/bin/env python3
-"""
-SportBit Auto Sign-Up for CrossFit Hilversum
 
-Automatically signs up for WOD classes on a weekly schedule.
-Run via cron or manually. Dry-run mode enabled by default.
-
-Usage:
-    python3 autosignup.py                  # dry-run (default)
-    python3 autosignup.py --live           # actually sign up
-    python3 autosignup.py --days 7         # look ahead 7 days (default: 7)
-"""
-
-import argparse
 import logging
+import os
 import sys
 from datetime import datetime, timedelta
 from urllib.parse import urljoin
 
 import requests
 
-# ──────────────────────────────────────────────────────────────
-# Configuration
-# ──────────────────────────────────────────────────────────────
-
-BASE_URL = "https://crossfithilversum.sportbitapp.nl/cbm/api/"
-
-# Rooster (schedule) ID: 1 = Hilversum
-ROOSTER_ID = 1
-
-# Weekly schedule: list of (weekday_number, time) pairs
-# Weekday numbers: 0=Mon, 1=Tue, 2=Wed, 3=Thu, 4=Fri, 5=Sat, 6=Sun
-SCHEDULE = [
-    (0, "20:00"),  # Monday 20:00
-    (2, "08:00"),  # Wednesday 08:00
-    (3, "20:00"),  # Thursday 20:00
-]
-
-DAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
-
-# ──────────────────────────────────────────────────────────────
-# Logging
-# ──────────────────────────────────────────────────────────────
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
-log = logging.getLogger("sportbit")
+
+log = logging.getLogger("sportbit-diagnostic")
 
 
-# ──────────────────────────────────────────────────────────────
-# SportBit Client
-# ──────────────────────────────────────────────────────────────
+# Alleen logische kandidaten.
+# Het script voert GEEN reserveringen uit.
+CANDIDATE_CLUBS = [
+    "https://crossfitbunschoten.sportbitapp.nl/",
+    "https://deboxbunschoten.sportbitapp.nl/",
+    "https://debox.sportbitapp.nl/",
+]
 
-class SportBitClient:
-    def __init__(self, username: str, password: str):
-        self.session = requests.Session()
-        self.session.headers.update({
+
+def try_club(base_web_url: str, username: str, password: str) -> bool:
+    api_url = urljoin(base_web_url, "cbm/api/")
+
+    session = requests.Session()
+    session.headers.update(
+        {
             "Accept": "application/json, text/plain, */*",
             "User-Agent": (
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
                 "Chrome/145.0.0.0 Safari/537.36"
             ),
-            "Referer": "https://crossfithilversum.sportbitapp.nl/web/nl/events",
-        })
-        self.username = username
-        self.password = password
-
-    def _url(self, path: str) -> str:
-        return urljoin(BASE_URL, path)
-
-    def _set_xsrf_header(self):
-        """Angular's HttpXsrfInterceptor sends XSRF-TOKEN cookie as X-XSRF-TOKEN header."""
-        token = self.session.cookies.get("XSRF-TOKEN")
-        if token:
-            self.session.headers["X-XSRF-TOKEN"] = token
-
-    def login(self) -> bool:
-        """Authenticate and establish session."""
-        log.info("Logging in as %s ...", self.username)
-
-        # Hit heartbeat endpoint to get XSRF-TOKEN cookie and session cookies
-        self.session.get(self._url("data/heartbeat/"))
-        self._set_xsrf_header()
-
-        resp = self.session.post(
-            self._url("data/inloggen/"),
-            json={"username": self.username, "password": self.password, "remember": True},
-        )
-
-        if resp.status_code == 200:
-            self._set_xsrf_header()
-            log.info("Login successful.")
-            return True
-
-        log.error("Login failed: %s %s", resp.status_code, resp.text[:200])
-        return False
-
-    def get_events(self, date: str) -> list[dict]:
-        """Fetch all events for a given date (YYYY-MM-DD)."""
-        resp = self.session.get(
-            self._url("data/events/"),
-            params={"datum": date, "rooster": ROOSTER_ID},
-        )
-        resp.raise_for_status()
-        data = resp.json()
-
-        # Flatten ochtend/middag/avond into single list
-        events = []
-        for period in ("ochtend", "middag", "avond"):
-            if isinstance(data.get(period), list):
-                events.extend(data[period])
-        return events
-
-    def signup(self, event_id: int) -> bool:
-        """Sign up for an event by ID."""
-        self._set_xsrf_header()
-        resp = self.session.post(
-            self._url(f"data/events/{event_id}/deelname/"),
-            json={},
-        )
-        if resp.status_code in (200, 204):
-            log.info("Signed up for event %d.", event_id)
-            return True
-
-        log.error("Sign-up failed for event %d: %s %s", event_id, resp.status_code, resp.text[:200])
-        return False
-
-
-# ──────────────────────────────────────────────────────────────
-# Core Logic
-# ──────────────────────────────────────────────────────────────
-
-def find_target_slots(days_ahead: int) -> list[tuple]:
-    """Return (date, time) pairs for scheduled classes within the look-ahead window."""
-    today = datetime.now().date()
-    target_weekdays = {weekday for weekday, _ in SCHEDULE}
-    slots = []
-    for offset in range(days_ahead):
-        d = today + timedelta(days=offset)
-        if d.weekday() in target_weekdays:
-            for weekday, time in SCHEDULE:
-                if d.weekday() == weekday:
-                    slots.append((d, time))
-    return slots
-
-
-def find_event_at_time(events: list[dict], target_time: str) -> dict | None:
-    """Find the WOD event matching the target time (e.g. '20:00')."""
-    for event in events:
-        start = event.get("start", "")
-        # start is like "2026-03-02T20:00:00+01:00"
-        if f"T{target_time}:00" in start:
-            return event
-    return None
-
-
-def run(username: str, password: str, dry_run: bool, days_ahead: int):
-    client = SportBitClient(username, password)
-
-    if not client.login():
-        log.error("Aborting: login failed.")
-        sys.exit(1)
-
-    slots = find_target_slots(days_ahead)
-    if not slots:
-        log.info("No scheduled classes in the next %d days.", days_ahead)
-        return
-
-    log.info(
-        "Checking %d slot(s): %s",
-        len(slots),
-        ", ".join(f"{DAY_NAMES[d.weekday()]} {d} {t}" for d, t in slots),
+            "Referer": urljoin(base_web_url, "web/nl/events"),
+        }
     )
 
-    results = {"signed_up": [], "already": [], "full_waitlist": [], "not_found": [], "failed": []}
+    log.info("Clubadres controleren: %s", base_web_url)
 
-    # Cache events per date to avoid duplicate API calls
-    events_cache: dict[str, list[dict]] = {}
+    try:
+        heartbeat = session.get(
+            urljoin(api_url, "data/heartbeat/"),
+            timeout=15,
+        )
+    except requests.RequestException as exc:
+        log.info("Niet bereikbaar: %s", type(exc).__name__)
+        return False
 
-    for date, target_time in slots:
-        date_str = date.strftime("%Y-%m-%d")
-        day_name = DAY_NAMES[date.weekday()]
-        label = f"{day_name} {date_str} {target_time}"
-        log.info("--- %s ---", label)
+    if heartbeat.status_code not in (200, 204):
+        log.info("Geen geldige heartbeat: HTTP %s", heartbeat.status_code)
+        return False
 
-        if date_str not in events_cache:
-            events_cache[date_str] = client.get_events(date_str)
-        events = events_cache[date_str]
+    xsrf_token = session.cookies.get("XSRF-TOKEN")
+    if xsrf_token:
+        session.headers["X-XSRF-TOKEN"] = xsrf_token
 
-        event = find_event_at_time(events, target_time)
+    try:
+        login_response = session.post(
+            urljoin(api_url, "data/inloggen/"),
+            json={
+                "username": username,
+                "password": password,
+                "remember": True,
+            },
+            timeout=15,
+        )
+    except requests.RequestException as exc:
+        log.info("Loginverzoek mislukt: %s", type(exc).__name__)
+        return False
 
-        if not event:
-            log.warning("No %s class found on %s.", target_time, date_str)
-            results["not_found"].append(label)
-            continue
+    if login_response.status_code != 200:
+        log.info("Login niet geaccepteerd: HTTP %s", login_response.status_code)
+        return False
 
-        eid = event["id"]
-        title = event.get("titel", "?")
-        spots = f"{event['aantalDeelnemers']}/{event['maxDeelnemers']}"
-        already = event.get("aangemeld", False)
-        on_waitlist = event.get("opWachtlijst", False)
+    log.info("LOGIN GELUKT voor %s", base_web_url)
 
-        if already:
-            log.info("Already signed up for %s at %s (%s) [%s].", title, target_time, spots, eid)
-            results["already"].append(label)
-            continue
+    if session.cookies.get("XSRF-TOKEN"):
+        session.headers["X-XSRF-TOKEN"] = session.cookies["XSRF-TOKEN"]
 
-        if on_waitlist:
-            log.info("Already on waitlist for %s at %s (%s) [%s].", title, target_time, spots, eid)
-            results["full_waitlist"].append(label)
-            continue
+    # Alleen roostergegevens uitlezen.
+    # Er wordt nergens een deelname-POST uitgevoerd.
+    for day_offset in range(0, 8):
+        target_date = datetime.now().date() + timedelta(days=day_offset)
+        date_text = target_date.strftime("%Y-%m-%d")
 
-        full = event["aantalDeelnemers"] >= event["maxDeelnemers"]
-        status = "FULL (waitlist)" if full else "open"
+        for rooster_id in range(1, 6):
+            try:
+                response = session.get(
+                    urljoin(api_url, "data/events/"),
+                    params={
+                        "datum": date_text,
+                        "rooster": rooster_id,
+                    },
+                    timeout=15,
+                )
+            except requests.RequestException:
+                continue
 
-        if dry_run:
+            if response.status_code != 200:
+                continue
+
+            try:
+                data = response.json()
+            except ValueError:
+                continue
+
+            events = []
+
+            for period in ("ochtend", "middag", "avond"):
+                period_events = data.get(period)
+
+                if isinstance(period_events, list):
+                    events.extend(period_events)
+
+            if not events:
+                continue
+
             log.info(
-                "[DRY RUN] Would sign up for %s at %s (%s, %s) [%s].",
-                title, target_time, spots, status, eid,
+                "Rooster gevonden: ID %s, datum %s, aantal lessen %s",
+                rooster_id,
+                date_text,
+                len(events),
             )
-            results["signed_up"].append(f"{label} (dry-run)")
-        else:
-            log.info("Signing up for %s at %s (%s, %s) [%s] ...", title, target_time, spots, status, eid)
-            if client.signup(eid):
-                results["signed_up"].append(label)
-            else:
-                results["failed"].append(label)
 
-    # Summary
-    log.info("=== Summary ===")
-    if results["signed_up"]:
-        log.info("Signed up:    %s", ", ".join(results["signed_up"]))
-    if results["already"]:
-        log.info("Already in:   %s", ", ".join(results["already"]))
-    if results["full_waitlist"]:
-        log.info("On waitlist:  %s", ", ".join(results["full_waitlist"]))
-    if results["not_found"]:
-        log.info("Not found:    %s", ", ".join(results["not_found"]))
-    if results["failed"]:
-        log.error("Failed:       %s", ", ".join(results["failed"]))
+            for event in events:
+                log.info(
+                    "LES | id=%s | titel=%s | start=%s | deelnemers=%s/%s",
+                    event.get("id", "?"),
+                    event.get("titel", "?"),
+                    event.get("start", "?"),
+                    event.get("aantalDeelnemers", "?"),
+                    event.get("maxDeelnemers", "?"),
+                )
 
+            return True
 
-# ──────────────────────────────────────────────────────────────
-# CLI
-# ──────────────────────────────────────────────────────────────
+    log.info("Login werkte, maar geen lessen gevonden bij rooster-ID 1 t/m 5.")
+    return True
+
 
 def main():
-    parser = argparse.ArgumentParser(description="SportBit auto sign-up for CrossFit Hilversum")
-    parser.add_argument("--live", action="store_true", help="Actually sign up (default: dry-run)")
-    parser.add_argument("--days", type=int, default=7, help="Days to look ahead (default: 7)")
-    parser.add_argument("--username", "-u", help="SportBit username (or set SPORTBIT_USERNAME env var)")
-    parser.add_argument("--password", "-p", help="SportBit password (or set SPORTBIT_PASSWORD env var)")
-    args = parser.parse_args()
-
-    import os
-    username = args.username or os.environ.get("SPORTBIT_USERNAME")
-    password = args.password or os.environ.get("SPORTBIT_PASSWORD")
+    username = os.environ.get("SPORTBIT_USERNAME")
+    password = os.environ.get("SPORTBIT_PASSWORD")
 
     if not username or not password:
-        log.error("Provide credentials via --username/--password or SPORTBIT_USERNAME/SPORTBIT_PASSWORD env vars.")
+        log.error(
+            "SPORTBIT_USERNAME en SPORTBIT_PASSWORD ontbreken in GitHub Secrets."
+        )
         sys.exit(1)
 
-    dry_run = not args.live
-    if dry_run:
-        log.info("DRY RUN mode - no sign-ups will be made. Use --live to actually sign up.")
+    for club_url in CANDIDATE_CLUBS:
+        if try_club(club_url, username, password):
+            log.info("Diagnose voltooid.")
+            return
 
-    run(username, password, dry_run, args.days)
+    log.error(
+        "Geen kandidaatadres werkte. Het echte SportBit-subdomein is nog nodig."
+    )
+    sys.exit(1)
 
 
 if __name__ == "__main__":
