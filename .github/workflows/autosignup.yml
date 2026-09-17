@@ -23,4 +23,4 @@ jobs:
         env:
           SPORTBIT_USERNAME: ${{ secrets.SPORTBIT_USERNAME }}
           SPORTBIT_PASSWORD: ${{ secrets.SPORTBIT_PASSWORD }}
-        run: python autosignup.py --days 7
+        run: python autosignup.py --live --days 3
