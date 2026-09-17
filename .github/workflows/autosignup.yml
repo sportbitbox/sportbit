@@ -1,28 +1,26 @@
-name: CrossFit Auto Sign-Up
+name: SportBit veilige test
 
 on:
-  schedule:
-    # 00:01 Amsterdam time = 23:01 UTC (winter/CET) or 22:01 UTC (summer/CEST)
-    # Run at both to cover the DST switch
-    - cron: "1 22 * * *"
-    - cron: "1 23 * * *"
-  workflow_dispatch: # Allow manual trigger from GitHub UI
+  workflow_dispatch:
 
 jobs:
-  signup:
+  diagnostic:
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+    steps:
+      - name: Repository ophalen
+        uses: actions/checkout@v4
+
+      - name: Python instellen
+        uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      - name: Install dependencies
+      - name: Benodigdheden installeren
         run: pip install requests
 
-      - name: Run auto sign-up
+      - name: Veilige dry-run uitvoeren
         env:
           SPORTBIT_USERNAME: ${{ secrets.SPORTBIT_USERNAME }}
           SPORTBIT_PASSWORD: ${{ secrets.SPORTBIT_PASSWORD }}
-        run: python autosignup.py --live --days 7
+        run: python autosignup.py --days 7
