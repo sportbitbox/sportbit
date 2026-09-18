@@ -1,26 +1,17 @@
-name: De Box automatisch inschrijven
+name: SportBit veilige test
 
 on:
   schedule:
     - cron: "*/5 * * * *"
   workflow_dispatch:
 
-permissions:
-  contents: write
-
-concurrency:
-  group: sportbit-auto-signup
-  cancel-in-progress: false
-
 jobs:
-  signup:
+  diagnostic:
     runs-on: ubuntu-latest
 
     steps:
       - name: Repository ophalen
         uses: actions/checkout@v4
-        with:
-          ref: main
 
       - name: Python instellen
         uses: actions/setup-python@v5
@@ -30,25 +21,8 @@ jobs:
       - name: Benodigdheden installeren
         run: pip install requests
 
-      - name: Python-code controleren
-        run: python -m py_compile autosignup.py
-
-      - name: Automatische inschrijving uitvoeren
+      - name: Veilige dry-run uitvoeren
         env:
           SPORTBIT_USERNAME: ${{ secrets.SPORTBIT_USERNAME }}
           SPORTBIT_PASSWORD: ${{ secrets.SPORTBIT_PASSWORD }}
         run: python autosignup.py --live --days 3
-
-      - name: Boekingsgeheugen opslaan
-        if: always()
-        run: |
-          if [ -f booked_events.json ]; then
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add booked_events.json
-            if ! git diff --cached --quiet; then
-              git commit -m "Update SportBit booking memory"
-              git pull --rebase origin main
-              git push origin HEAD:main
-            fi
-          fi
