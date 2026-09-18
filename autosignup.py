@@ -337,7 +337,7 @@ class SportBitClient:
         except requests.RequestException as error:
             return False, str(error)
 
-        if response.status_code in [200, 204\]:
+        if response.status_code in [200, 204]:
             return True, ""
 
         error_message = (
