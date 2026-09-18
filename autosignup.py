@@ -462,5 +462,4 @@ def get_target_slots(days_ahead):
             if date_value.weekday() == weekday:
                 slots.append(
                     (
-                        date_value,
-          
+                        date_value,1)
