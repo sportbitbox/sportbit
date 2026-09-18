@@ -30,6 +30,9 @@ jobs:
       - name: Benodigdheden installeren
         run: pip install requests
 
+      - name: Python-code controleren
+        run: python -m py_compile autosignup.py
+
       - name: Automatische inschrijving uitvoeren
         env:
           SPORTBIT_USERNAME: ${{ secrets.SPORTBIT_USERNAME }}
