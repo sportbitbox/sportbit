@@ -45,9 +45,7 @@ jobs:
           if [ -f booked_events.json ]; then
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
             git add booked_events.json
-
             if ! git diff --cached --quiet; then
               git commit -m "Update SportBit booking memory"
               git pull --rebase origin main
