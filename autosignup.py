@@ -348,7 +348,7 @@ class SportBitClient:
             "ochtend",
             "middag",
             "avond",
-        \]:
+        ]:
             period_events = data.get(period)
 
             if isinstance(period_events, list):
@@ -422,7 +422,7 @@ class SportBitClient:
         except requests.RequestException as error:
             return False, str(error)
 
-        if response.status_code in [200, 204\]:
+        if response.status_code in [200, 204]:
             return True, ""
 
         error_message = (
