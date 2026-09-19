@@ -21,12 +21,19 @@ import sys
 import unicodedata
 from datetime import datetime, timedelta
 from urllib.parse import urljoin
+from zoneinfo import ZoneInf
 
 import requests
 
 BASE_WEB_URL = "https://deboxbunschoten.sportbitapp.nl/"
 BASE_API_URL = urljoin(BASE_WEB_URL, "cbm/api/")
 REFERER = urljoin(BASE_WEB_URL, "web/nl/events")
+
+AMSTERDAM = ZoneInfo("Europe/Amsterdam")
+
+REGISTRATION_OPENS_HOURS = 48
+WINDOW_BEFORE_MINUTES = 15
+WINDOW_AFTER_MINUTES = 15
 
 # Try several roster IDs because the public portal does not expose De Box's ID.
 # Set SPORTBIT_ROOSTER_IDS, for example "1" or "1,2", to override this list.
@@ -188,11 +195,31 @@ def target_slots(days_ahead: int) -> list[tuple]:
     return slots
 
 
-def event_start_time(event: dict) -> str:
+def event_start_datetime(event: dict):
     start = str(event.get("start", ""))
-    match = re.search(r"T(\d{2}:\d{2})(?::\d{2})?", start)
-    return match.group(1) if match else ""
 
+    try:
+        start_datetime = datetime.fromisoformat(start)
+    except ValueError:
+        return None
+
+    if start_datetime.tzinfo is None:
+        start_datetime = start_datetime.replace(
+            tzinfo=AMSTERDAM
+        )
+
+    return start_datetime.astimezone(
+        AMSTERDAM
+    )
+
+
+def event_start_time(event: dict) -> str:
+    start_datetime = event_start_datetime(event)
+
+    if start_datetime is None:
+        return ""
+
+    return start_datetime.strftime("%H:%M")
 
 def find_unique_event(events: list[dict], target_time: str, titles: tuple[str, ...]) -> dict | None:
     accepted = {normalize(title) for title in titles}
