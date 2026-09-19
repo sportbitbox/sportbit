@@ -21,7 +21,7 @@ import sys
 import unicodedata
 from datetime import datetime, timedelta
 from urllib.parse import urljoin
-from zoneinfo import ZoneInf
+from zoneinfo import ZoneInfo
 
 import requests
 
@@ -355,8 +355,6 @@ def run(username: str, password: str, dry_run: bool, days_ahead: int, max_signup
             booking_window_starts.isoformat(),
             booking_window_ends.isoformat(),
         )
-
-        if dry_run:
 
         if dry_run:
             log.info("[DRY RUN] Would register: %s (%s) [id=%s]", actual_title, spots, event_id)
