@@ -295,11 +295,68 @@ def run(username: str, password: str, dry_run: bool, days_ahead: int, max_signup
             results["waitlist"].append(label)
             continue
 
-        # Safety: do not automatically join a waitlist. A later version can enable this explicitly.
+        # Niet automatisch inschrijven op een wachtlijst.
         if capacity > 0 and participants >= capacity:
-            log.warning("Lesson is full; skipping automatic waitlist: %s (%s)", actual_title, spots)
+            log.warning(
+                "Lesson is full; skipping automatic waitlist: %s (%s)",
+                actual_title,
+                spots,
+            )
             results["full"].append(label)
             continue
+
+        lesson_start = event_start_datetime(event)
+
+        if lesson_start is None:
+            log.error(
+                "Invalid lesson start date: %s [id=%s]",
+                actual_title,
+                event_id,
+            )
+            results["failed"].append(label)
+            failures += 1
+            continue
+
+        registration_opens = (
+            lesson_start
+            - timedelta(hours=REGISTRATION_OPENS_HOURS)
+        )
+
+        booking_window_starts = (
+            registration_opens
+            - timedelta(minutes=WINDOW_BEFORE_MINUTES)
+        )
+
+        booking_window_ends = (
+            registration_opens
+            + timedelta(minutes=WINDOW_AFTER_MINUTES)
+        )
+
+        current_time = datetime.now(AMSTERDAM)
+
+        if current_time < booking_window_starts:
+            log.info(
+                "Booking window not open yet. Window: %s until %s",
+                booking_window_starts.isoformat(),
+                booking_window_ends.isoformat(),
+            )
+            continue
+
+        if current_time > booking_window_ends:
+            log.info(
+                "Booking window closed. No registration attempted for %s.",
+                actual_title,
+            )
+            continue
+
+        log.info(
+            "Inside booking window for %s: %s until %s",
+            actual_title,
+            booking_window_starts.isoformat(),
+            booking_window_ends.isoformat(),
+        )
+
+        if dry_run:
 
         if dry_run:
             log.info("[DRY RUN] Would register: %s (%s) [id=%s]", actual_title, spots, event_id)
