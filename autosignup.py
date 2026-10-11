@@ -5,7 +5,7 @@ SportBit Auto Sign-Up for De Box Bunschoten.
 Targets:
 - Monday 07:00: WOD
 - Tuesday 06:00: Power
-- Wednesday 6:00 WOD
+- Wednesday 06:00 WOD
 - Thursday 07:00: Power
 - Saturday 09:15: Power
 - Saturday 09:15: Buddy Workout / Buddy WOD
