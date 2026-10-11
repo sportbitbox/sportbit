@@ -4,7 +4,7 @@ SportBit Auto Sign-Up for De Box Bunschoten.
 
 Targets:
 - Monday 07:00: WOD
-- Tuesday 06:00: Strength
+- Tuesday 06:00: Power
 - Thursday 07:00: Power
 - Saturday 09:15: Power
 - Saturday 09:15: Buddy Workout / Buddy WOD
@@ -43,7 +43,7 @@ DEFAULT_ROOSTER_IDS = tuple(range(1, 11))
 # Weekday: Monday=0 ... Sunday=6
 SCHEDULE = [
     (0, "07:00", ("WOD",)),
-    (1, "06:00", ("Strength",)),
+    (1, "06:00", ("Power",)),
     (3, "07:00", ("Power",)),
     (5, "09:15", ("Power",)),
     (5, "09:15", ("Buddy Workout", "Buddy WOD")),
