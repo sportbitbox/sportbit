@@ -19,6 +19,7 @@ import logging
 import os
 import re
 import sys
+import time
 import unicodedata
 from datetime import datetime, timedelta
 from urllib.parse import urljoin
@@ -33,8 +34,9 @@ REFERER = urljoin(BASE_WEB_URL, "web/nl/events")
 AMSTERDAM = ZoneInfo("Europe/Amsterdam")
 
 REGISTRATION_OPENS_HOURS = 48
-WINDOW_BEFORE_MINUTES = 15
-WINDOW_AFTER_MINUTES = 15
+WINDOW_BEFORE_MINUTES = 5
+WINDOW_AFTER_MINUTES = 5
+RETRY_INTERVAL_SECONDS = 10
 
 # Try several roster IDs because the public portal does not expose De Box's ID.
 # Set SPORTBIT_ROOSTER_IDS, for example "1" or "1,2", to override this list.
