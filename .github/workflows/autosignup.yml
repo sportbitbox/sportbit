@@ -1,12 +1,16 @@
-name: SportBit veilige test
+name: De Box automatisch inschrijven
 
 on:
   schedule:
     - cron: "*/5 * * * *"
   workflow_dispatch:
 
+concurrency:
+  group: sportbit-auto-signup
+  cancel-in-progress: false
+
 jobs:
-  diagnostic:
+  signup:
     runs-on: ubuntu-latest
 
     steps:
@@ -21,8 +25,11 @@ jobs:
       - name: Benodigdheden installeren
         run: pip install requests
 
-      - name: Veilige dry-run uitvoeren
+      - name: Python-code controleren
+        run: python -m py_compile autosignup.py
+
+      - name: Automatisch inschrijven
         env:
           SPORTBIT_USERNAME: ${{ secrets.SPORTBIT_USERNAME }}
           SPORTBIT_PASSWORD: ${{ secrets.SPORTBIT_PASSWORD }}
-        run: python autosignup.py --live --days 3
+        run: python autosignup.py --live --days 3 --max-signups 6
