@@ -4,30 +4,24 @@ on:
   schedule:
 
     # Maandag WOD 07:00
-    # Inschrijving opent zaterdag 07:00 NL
-    # Zomertijd + wintertijd
-    - cron: "50 4 * * 6"
-    - cron: "50 5 * * 6"
+    - cron: "55 4 * * 6"
+    - cron: "55 5 * * 6"
 
     # Dinsdag Power 06:00
-    # Inschrijving opent zondag 06:00 NL
-    - cron: "50 3 * * 0"
-    - cron: "50 4 * * 0"
+    - cron: "55 3 * * 0"
+    - cron: "55 4 * * 0"
 
     # Woensdag WOD 06:00
-    # Inschrijving opent maandag 06:00 NL
-    - cron: "50 3 * * 1"
-    - cron: "50 4 * * 1"
+    - cron: "55 3 * * 1"
+    - cron: "55 4 * * 1"
 
     # Donderdag Power 07:00
-    # Inschrijving opent dinsdag 07:00 NL
-    - cron: "50 4 * * 2"
-    - cron: "50 5 * * 2"
+    - cron: "55 4 * * 2"
+    - cron: "55 5 * * 2"
 
     # Zaterdag Power + Buddy Workout 09:15
-    # Inschrijving opent donderdag 09:15 NL
-    - cron: "5 7 * * 4"
-    - cron: "5 8 * * 4"
+    - cron: "10 7 * * 4"
+    - cron: "10 8 * * 4"
 
   workflow_dispatch:
 
