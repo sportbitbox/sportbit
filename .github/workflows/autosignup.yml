@@ -32,4 +32,4 @@ jobs:
         env:
           SPORTBIT_USERNAME: ${{ secrets.SPORTBIT_USERNAME }}
           SPORTBIT_PASSWORD: ${{ secrets.SPORTBIT_PASSWORD }}
-        run: python autosignup.py --live --days 3 --max-signups 6
+        run: python autosignup.py --live --days 7 --max-signups 6
