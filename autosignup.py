@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-SportBit Auto Sign-Up voor De Box Bunschoten.
+Automatische SportBit-inschrijving voor De Box Bunschoten.
 
-Vaste lessen:
+Lessen:
 - Maandag 07:00 WOD
 - Dinsdag 06:00 Power
 - Woensdag 06:00 WOD
@@ -10,17 +10,17 @@ Vaste lessen:
 - Zaterdag 09:15 Power
 - Zaterdag 09:15 Buddy Workout / Buddy WOD
 
-Werking:
-- Inschrijven opent 48 uur voor de les.
-- De workflow mag maximaal 15 minuten voor opening starten.
-- Voor opening wacht het script zonder inschrijfpogingen.
-- Poging 1 start exact bij opening.
-- Daarna volgt iedere 30 seconden een nieuwe poging.
-- Het script doet maximaal 7 pogingen.
-- De laatste poging vindt 3 minuten na opening plaats.
-- Na een geslaagde poging stopt het script direct.
-- Bij een volle les probeert het script de wachtlijst.
-- Bij een HTTP 429-melding stopt het script direct.
+Pogingen:
+1. Exact bij opening
+2. 30 seconden na opening
+3. 60 seconden na opening
+4. 90 seconden na opening
+5. 120 seconden na opening
+6. 150 seconden na opening
+7. 180 seconden na opening
+
+De workflow mag maximaal 15 minuten voor opening starten.
+Voor opening wacht het script zonder inschrijfpogingen te versturen.
 """
 
 import argparse
@@ -39,7 +39,7 @@ import requests
 
 
 # ------------------------------------------------------------
-# Algemene instellingen
+# Instellingen
 # ------------------------------------------------------------
 
 BASE_WEB_URL = "https://deboxbunschoten.sportbitapp.nl/"
@@ -58,32 +58,13 @@ AMSTERDAM = ZoneInfo(
     "Europe/Amsterdam"
 )
 
-
-# ------------------------------------------------------------
-# Inschrijfinstellingen
-# ------------------------------------------------------------
-
 REGISTRATION_OPENS_HOURS = 48
 
-# GitHub mag maximaal 15 minuten voor opening starten.
-# Voor opening doet het script nog geen inschrijfpogingen.
 MONITOR_BEFORE_MINUTES = 15
-
-# Zeven pogingen:
-# 1. 00:00
-# 2. 00:30
-# 3. 01:00
-# 4. 01:30
-# 5. 02:00
-# 6. 02:30
-# 7. 03:00
-
-MAX_ATTEMPTS_PER_LESSON = 7
 
 RETRY_INTERVAL_SECONDS = 30
 
-# De laatste poging vindt drie minuten na opening plaats.
-BOOKING_WINDOW_AFTER_MINUTES = 3
+MAX_ATTEMPTS_PER_LESSON = 7
 
 DEFAULT_ROSTER_IDS = tuple(
     range(1, 11)
@@ -155,7 +136,7 @@ log = logging.getLogger(
 
 def normalize(value):
     """
-    Maak lestitels geschikt voor een veilige vergelijking.
+    Maak lestitels geschikt voor vergelijking.
     """
 
     text = unicodedata.normalize(
@@ -209,8 +190,7 @@ def parse_roster_ids():
 
     except ValueError:
         log.error(
-            "SPORTBIT_ROOSTER_IDS moet "
-            "komma-gescheiden nummers bevatten. "
+            "SPORTBIT_ROOSTER_IDS moet nummers bevatten. "
             "Gebruik bijvoorbeeld 1 of 1,2."
         )
 
@@ -220,6 +200,35 @@ def parse_roster_ids():
         return DEFAULT_ROSTER_IDS
 
     return roster_ids
+
+
+def sleep_until(target_time):
+    """
+    Wacht tot het opgegeven tijdstip.
+    """
+
+    while True:
+        current_time = datetime.now(
+            AMSTERDAM
+        )
+
+        remaining_seconds = (
+            target_time
+            - current_time
+        ).total_seconds()
+
+        if remaining_seconds <= 0:
+            return
+
+        time.sleep(
+            min(
+                10,
+                max(
+                    0.1,
+                    remaining_seconds,
+                ),
+            )
+        )
 
 
 # ------------------------------------------------------------
@@ -246,7 +255,7 @@ class SportBitClient:
                 ),
                 "User-Agent": (
                     "Mozilla/5.0 "
-                    "SportBitAutoSignup/4.0"
+                    "SportBitAutoSignup/5.0"
                 ),
                 "Referer": REFERER,
             }
@@ -413,8 +422,7 @@ class SportBitClient:
 
         if successful_rosters == 0:
             raise RuntimeError(
-                "Geen enkel rooster kon "
-                "worden gelezen voor "
+                "Geen enkel rooster kon worden gelezen voor "
                 + date_text
             )
 
@@ -429,9 +437,9 @@ class SportBitClient:
         """
         Verstuur een deelnameverzoek.
 
-        Als de les vol is, verstuurt het script hetzelfde verzoek.
-        SportBit bepaalt vervolgens of inschrijving op de wachtlijst
-        mogelijk is.
+        Bij een volle les verstuurt het script hetzelfde
+        deelnameverzoek. SportBit bepaalt of daarmee een
+        wachtlijstinschrijving ontstaat.
         """
 
         self.set_xsrf_header()
@@ -583,455 +591,10 @@ def find_unique_event(
 
     if len(matches) > 1:
         log.error(
-            "Meerdere passende lessen gevonden "
-            "om %s voor %s. "
-            "Les wordt overgeslagen.",
+            "Meerdere passende lessen gevonden om %s "
+            "voor %s. Les wordt overgeslagen.",
             target_time,
             "/".join(allowed_titles),
         )
 
     return None
-
-
-# ------------------------------------------------------------
-# Automatische uitvoering
-# ------------------------------------------------------------
-
-def run(
-    username,
-    password,
-    dry_run,
-    days_ahead,
-    max_signups,
-):
-    client = SportBitClient(
-        username,
-        password,
-    )
-
-    if not client.login():
-        return 1
-
-    roster_ids = parse_roster_ids()
-
-    events_cache = {}
-
-    successful_signups = 0
-    failures = 0
-
-    slots = get_target_slots(
-        days_ahead
-    )
-
-    for slot in slots:
-        date_value = slot[0]
-        target_time = slot[1]
-        allowed_titles = slot[2]
-
-        date_text = date_value.isoformat()
-
-        label = (
-            DAY_NAMES[
-                date_value.weekday()
-            ]
-            + " "
-            + date_text
-            + " "
-            + target_time
-            + " "
-            + "/".join(
-                allowed_titles
-            )
-        )
-
-        log.info(
-            "--- %s ---",
-            label,
-        )
-
-        if date_text not in events_cache:
-
-            try:
-                events_cache[
-                    date_text
-                ] = client.get_events_all_rosters(
-                    date_text,
-                    roster_ids,
-                )
-
-            except RuntimeError as error:
-                log.error(
-                    "%s",
-                    error,
-                )
-
-                failures += 1
-
-                continue
-
-        event = find_unique_event(
-            events_cache[date_text],
-            target_time,
-            allowed_titles,
-        )
-
-        if event is None:
-            log.warning(
-                "Target lesson not found: %s",
-                label,
-            )
-
-            continue
-
-        event_id = event.get(
-            "id"
-        )
-
-        if event_id is None:
-            log.error(
-                "Les heeft geen geldig ID: %s",
-                label,
-            )
-
-            failures += 1
-
-            continue
-
-        actual_title = str(
-            event.get(
-                "titel",
-                "?",
-            )
-        )
-
-        already_registered = bool(
-            event.get(
-                "aangemeld",
-                False,
-            )
-        )
-
-        already_on_waitlist = bool(
-            event.get(
-                "opWachtlijst",
-                False,
-            )
-        )
-
-        participant_count = int(
-            event.get(
-                "aantalDeelnemers",
-                0,
-            )
-            or 0
-        )
-
-        maximum_participants = int(
-            event.get(
-                "maxDeelnemers",
-                0,
-            )
-            or 0
-        )
-
-        if already_registered:
-            log.info(
-                "Already registered: "
-                "%s [id=%s]",
-                actual_title,
-                event_id,
-            )
-
-            continue
-
-        if already_on_waitlist:
-            log.info(
-                "Already on waitlist: "
-                "%s [id=%s]",
-                actual_title,
-                event_id,
-            )
-
-            continue
-
-        lesson_is_full = (
-            maximum_participants > 0
-            and participant_count
-            >= maximum_participants
-        )
-
-        if lesson_is_full:
-            log.info(
-                "Lesson is full. "
-                "The script will try to join "
-                "the waiting list: %s",
-                actual_title,
-            )
-
-        lesson_start = get_event_start(
-            event
-        )
-
-        if lesson_start is None:
-            log.error(
-                "Ongeldige startdatum voor "
-                "%s [id=%s]",
-                actual_title,
-                event_id,
-            )
-
-            failures += 1
-
-            continue
-
-        registration_opens = (
-            lesson_start
-            - timedelta(
-                hours=REGISTRATION_OPENS_HOURS
-            )
-        )
-
-        monitor_starts = (
-            registration_opens
-            - timedelta(
-                minutes=MONITOR_BEFORE_MINUTES
-            )
-        )
-
-        final_attempt_time = (
-            registration_opens
-            + timedelta(
-                minutes=BOOKING_WINDOW_AFTER_MINUTES
-            )
-        )
-
-        current_time = datetime.now(
-            AMSTERDAM
-        )
-
-        if current_time < monitor_starts:
-            log.info(
-                "Monitoring window not open yet. "
-                "Window starts at %s.",
-                monitor_starts.isoformat(),
-            )
-
-            continue
-
-        if current_time > final_attempt_time:
-            log.info(
-                "Booking window closed. "
-                "No registration attempted for %s.",
-                actual_title,
-            )
-
-            continue
-
-        if dry_run:
-            log.info(
-                "[DRY RUN] Would attempt registration "
-                "7 times from %s until %s: "
-                "%s [id=%s]",
-                registration_opens.isoformat(),
-                final_attempt_time.isoformat(),
-                actual_title,
-                event_id,
-            )
-
-            continue
-
-        if successful_signups >= max_signups:
-            log.error(
-                "Maximum number of registrations "
-                "reached: %s",
-                max_signups,
-            )
-
-            break
-
-        # Wacht tot het officiële openingsmoment.
-        # Voor opening worden geen deelnameverzoeken verstuurd.
-        while (
-            datetime.now(AMSTERDAM)
-            < registration_opens
-        ):
-            current_time = datetime.now(
-                AMSTERDAM
-            )
-
-            seconds_remaining = (
-                registration_opens
-                - current_time
-            ).total_seconds()
-
-            log.info(
-                "Waiting for registration to open. "
-                "Approximately %.0f seconds remaining.",
-                max(
-                    0,
-                    seconds_remaining,
-                ),
-            )
-
-            time.sleep(
-                min(
-                    10,
-                    max(
-                        1,
-                        seconds_remaining,
-                    ),
-                )
-            )
-
-        registration_succeeded = False
-        last_error = ""
-
-        # Exact zeven pogingen.
-        for attempt_number in range(
-            1,
-            MAX_ATTEMPTS_PER_LESSON + 1,
-        ):
-            scheduled_attempt_time = (
-                registration_opens
-                + timedelta(
-                    seconds=(
-                        attempt_number - 1
-                    )
-                    * RETRY_INTERVAL_SECONDS
-                )
-            )
-
-            while (
-                datetime.now(AMSTERDAM)
-                < scheduled_attempt_time
-            ):
-                seconds_to_attempt = (
-                    scheduled_attempt_time
-                    - datetime.now(AMSTERDAM)
-                ).total_seconds()
-
-                time.sleep(
-                    min(
-                        1,
-                        max(
-                            0.1,
-                            seconds_to_attempt,
-                        ),
-                    )
-                )
-
-            log.info(
-                "Registration attempt %s of %s "
-                "for %s [id=%s].",
-                attempt_number,
-                MAX_ATTEMPTS_PER_LESSON,
-                actual_title,
-                event_id,
-            )
-
-            success, error_message = client.signup(
-                event_id
-            )
-
-            if success:
-                successful_signups += 1
-                registration_succeeded = True
-
-                if lesson_is_full:
-                    log.info(
-                        "Waiting-list request accepted "
-                        "on attempt %s.",
-                        attempt_number,
-                    )
-
-                else:
-                    log.info(
-                        "Registration successful "
-                        "on attempt %s.",
-                        attempt_number,
-                    )
-
-                break
-
-            last_error = error_message
-
-            if "HTTP 429" in error_message:
-                log.warning(
-                    "SportBit rate limit received. "
-                    "Stopping retries for %s.",
-                    actual_title,
-                )
-
-                break
-
-            if attempt_number < MAX_ATTEMPTS_PER_LESSON:
-                log.warning(
-                    "Attempt %s failed: %s. "
-                    "Next attempt in %s seconds.",
-                    attempt_number,
-                    error_message,
-                    RETRY_INTERVAL_SECONDS,
-                )
-
-        if not registration_succeeded:
-            log.warning(
-                "No successful registration or "
-                "waiting-list request after %s attempts. "
-                "Last response: %s",
-                MAX_ATTEMPTS_PER_LESSON,
-                last_error or "none",
-            )
-
-    if failures:
-        return 1
-
-    return 0
-
-
-# ------------------------------------------------------------
-# Startpunt
-# ------------------------------------------------------------
-
-def main():
-    parser = argparse.ArgumentParser(
-        description=(
-            "SportBit Auto Sign-Up "
-            "voor De Box Bunschoten"
-        )
-    )
-
-    parser.add_argument(
-        "--live",
-        action="store_true",
-        help=(
-            "Werkelijk inschrijven. "
-            "Zonder deze optie is het een dry-run."
-        ),
-    )
-
-    parser.add_argument(
-        "--days",
-        type=int,
-        default=7,
-        help=(
-            "Aantal dagen vooruit controleren."
-        ),
-    )
-
-    parser.add_argument(
-        "--max-signups",
-        type=int,
-        default=6,
-        help=(
-            "Maximaal aantal geslaagde "
-            "inschrijvingen per workflow-run."
-        ),
-    )
-
-    arguments = parser.parse_args()
-
-    username = os.environ.get(
-        "SPORTBIT_USERNAME"
-    )
-
-    password =
