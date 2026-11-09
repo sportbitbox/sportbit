@@ -12,13 +12,15 @@ Vaste lessen:
 
 Werking:
 - Inschrijven opent 48 uur voor de les.
-- De workflow mag 5 minuten voor opening actief worden.
+- De workflow mag maximaal 15 minuten voor opening starten.
 - Voor opening wacht het script zonder inschrijfpogingen.
-- Vanaf opening probeert het script iedere 10 seconden.
-- Na succes stopt het script onmiddellijk.
-- Uiterlijk 5 minuten na opening stopt het script.
-- Volle lessen worden overgeslagen.
-- Het script gaat niet automatisch op de wachtlijst.
+- Poging 1 start exact bij opening.
+- Daarna volgt iedere 30 seconden een nieuwe poging.
+- Het script doet maximaal 7 pogingen.
+- De laatste poging vindt 3 minuten na opening plaats.
+- Na een geslaagde poging stopt het script direct.
+- Bij een volle les probeert het script de wachtlijst.
+- Bij een HTTP 429-melding stopt het script direct.
 """
 
 import argparse
@@ -37,14 +39,16 @@ import requests
 
 
 # ------------------------------------------------------------
-# Instellingen
+# Algemene instellingen
 # ------------------------------------------------------------
 
 BASE_WEB_URL = "https://deboxbunschoten.sportbitapp.nl/"
+
 BASE_API_URL = urljoin(
     BASE_WEB_URL,
     "cbm/api/",
 )
+
 REFERER = urljoin(
     BASE_WEB_URL,
     "web/nl/events",
@@ -54,17 +58,41 @@ AMSTERDAM = ZoneInfo(
     "Europe/Amsterdam"
 )
 
+
+# ------------------------------------------------------------
+# Inschrijfinstellingen
+# ------------------------------------------------------------
+
 REGISTRATION_OPENS_HOURS = 48
 
-WINDOW_BEFORE_MINUTES = 5
-WINDOW_AFTER_MINUTES = 5
+# GitHub mag maximaal 15 minuten voor opening starten.
+# Voor opening doet het script nog geen inschrijfpogingen.
+MONITOR_BEFORE_MINUTES = 15
 
-RETRY_INTERVAL_SECONDS = 10
+# Zeven pogingen:
+# 1. 00:00
+# 2. 00:30
+# 3. 01:00
+# 4. 01:30
+# 5. 02:00
+# 6. 02:30
+# 7. 03:00
+
+MAX_ATTEMPTS_PER_LESSON = 7
+
+RETRY_INTERVAL_SECONDS = 30
+
+# De laatste poging vindt drie minuten na opening plaats.
+BOOKING_WINDOW_AFTER_MINUTES = 3
 
 DEFAULT_ROSTER_IDS = tuple(
     range(1, 11)
 )
 
+
+# ------------------------------------------------------------
+# Lesschema
+# ------------------------------------------------------------
 
 # Weekdagen:
 # 0 = maandag
@@ -127,7 +155,7 @@ log = logging.getLogger(
 
 def normalize(value):
     """
-    Maak lestitels vergelijkbaar.
+    Maak lestitels geschikt voor een veilige vergelijking.
     """
 
     text = unicodedata.normalize(
@@ -158,8 +186,8 @@ def parse_roster_ids():
     """
     Lees optioneel SPORTBIT_ROOSTER_IDS.
 
-    Zonder aparte instelling worden
-    rooster-ID's 1 tot en met 10 geprobeerd.
+    Zonder aparte instelling probeert het script
+    rooster-ID 1 tot en met 10.
     """
 
     raw_value = os.environ.get(
@@ -182,8 +210,8 @@ def parse_roster_ids():
     except ValueError:
         log.error(
             "SPORTBIT_ROOSTER_IDS moet "
-            "komma-gescheiden nummers bevatten, "
-            "bijvoorbeeld 1 of 1,2."
+            "komma-gescheiden nummers bevatten. "
+            "Gebruik bijvoorbeeld 1 of 1,2."
         )
 
         sys.exit(2)
@@ -218,7 +246,7 @@ class SportBitClient:
                 ),
                 "User-Agent": (
                     "Mozilla/5.0 "
-                    "SportBitAutoSignup/3.0"
+                    "SportBitAutoSignup/4.0"
                 ),
                 "Referer": REFERER,
             }
@@ -398,6 +426,14 @@ class SportBitClient:
         self,
         event_id,
     ):
+        """
+        Verstuur een deelnameverzoek.
+
+        Als de les vol is, verstuurt het script hetzelfde verzoek.
+        SportBit bepaalt vervolgens of inschrijving op de wachtlijst
+        mogelijk is.
+        """
+
         self.set_xsrf_header()
 
         try:
@@ -718,18 +754,19 @@ def run(
 
             continue
 
-        if (
+        lesson_is_full = (
             maximum_participants > 0
             and participant_count
             >= maximum_participants
-        ):
-            log.warning(
+        )
+
+        if lesson_is_full:
+            log.info(
                 "Lesson is full. "
-                "Automatic waitlist is disabled: %s",
+                "The script will try to join "
+                "the waiting list: %s",
                 actual_title,
             )
-
-            continue
 
         lesson_start = get_event_start(
             event
@@ -754,17 +791,17 @@ def run(
             )
         )
 
-        booking_window_starts = (
+        monitor_starts = (
             registration_opens
             - timedelta(
-                minutes=WINDOW_BEFORE_MINUTES
+                minutes=MONITOR_BEFORE_MINUTES
             )
         )
 
-        booking_window_ends = (
+        final_attempt_time = (
             registration_opens
             + timedelta(
-                minutes=WINDOW_AFTER_MINUTES
+                minutes=BOOKING_WINDOW_AFTER_MINUTES
             )
         )
 
@@ -772,17 +809,16 @@ def run(
             AMSTERDAM
         )
 
-        if current_time < booking_window_starts:
+        if current_time < monitor_starts:
             log.info(
-                "Booking window not open yet. "
-                "Window: %s until %s",
-                booking_window_starts.isoformat(),
-                booking_window_ends.isoformat(),
+                "Monitoring window not open yet. "
+                "Window starts at %s.",
+                monitor_starts.isoformat(),
             )
 
             continue
 
-        if current_time > booking_window_ends:
+        if current_time > final_attempt_time:
             log.info(
                 "Booking window closed. "
                 "No registration attempted for %s.",
@@ -793,8 +829,11 @@ def run(
 
         if dry_run:
             log.info(
-                "[DRY RUN] Would monitor "
-                "and register: %s [id=%s]",
+                "[DRY RUN] Would attempt registration "
+                "7 times from %s until %s: "
+                "%s [id=%s]",
+                registration_opens.isoformat(),
+                final_attempt_time.isoformat(),
                 actual_title,
                 event_id,
             )
@@ -810,8 +849,8 @@ def run(
 
             break
 
-        # Voor het officiële openingsmoment:
-        # actief wachten, maar niets naar SportBit sturen.
+        # Wacht tot het officiële openingsmoment.
+        # Voor opening worden geen deelnameverzoeken verstuurd.
         while (
             datetime.now(AMSTERDAM)
             < registration_opens
@@ -834,34 +873,58 @@ def run(
                 ),
             )
 
-            sleep_seconds = min(
-                RETRY_INTERVAL_SECONDS,
-                max(
-                    1,
-                    seconds_remaining,
-                ),
-            )
-
             time.sleep(
-                sleep_seconds
+                min(
+                    10,
+                    max(
+                        1,
+                        seconds_remaining,
+                    ),
+                )
             )
 
-        attempt_number = 0
         registration_succeeded = False
         last_error = ""
 
-        # Na het officiële openingsmoment:
-        # iedere 10 seconden een poging.
-        while (
-            datetime.now(AMSTERDAM)
-            <= booking_window_ends
+        # Exact zeven pogingen.
+        for attempt_number in range(
+            1,
+            MAX_ATTEMPTS_PER_LESSON + 1,
         ):
-            attempt_number += 1
+            scheduled_attempt_time = (
+                registration_opens
+                + timedelta(
+                    seconds=(
+                        attempt_number - 1
+                    )
+                    * RETRY_INTERVAL_SECONDS
+                )
+            )
+
+            while (
+                datetime.now(AMSTERDAM)
+                < scheduled_attempt_time
+            ):
+                seconds_to_attempt = (
+                    scheduled_attempt_time
+                    - datetime.now(AMSTERDAM)
+                ).total_seconds()
+
+                time.sleep(
+                    min(
+                        1,
+                        max(
+                            0.1,
+                            seconds_to_attempt,
+                        ),
+                    )
+                )
 
             log.info(
-                "Registration attempt %s "
+                "Registration attempt %s of %s "
                 "for %s [id=%s].",
                 attempt_number,
+                MAX_ATTEMPTS_PER_LESSON,
                 actual_title,
                 event_id,
             )
@@ -874,11 +937,19 @@ def run(
                 successful_signups += 1
                 registration_succeeded = True
 
-                log.info(
-                    "Registration successful "
-                    "on attempt %s.",
-                    attempt_number,
-                )
+                if lesson_is_full:
+                    log.info(
+                        "Waiting-list request accepted "
+                        "on attempt %s.",
+                        attempt_number,
+                    )
+
+                else:
+                    log.info(
+                        "Registration successful "
+                        "on attempt %s.",
+                        attempt_number,
+                    )
 
                 break
 
@@ -893,23 +964,21 @@ def run(
 
                 break
 
-            log.warning(
-                "Attempt %s failed: %s. "
-                "Retrying in %s seconds.",
-                attempt_number,
-                error_message,
-                RETRY_INTERVAL_SECONDS,
-            )
-
-            time.sleep(
-                RETRY_INTERVAL_SECONDS
-            )
+            if attempt_number < MAX_ATTEMPTS_PER_LESSON:
+                log.warning(
+                    "Attempt %s failed: %s. "
+                    "Next attempt in %s seconds.",
+                    attempt_number,
+                    error_message,
+                    RETRY_INTERVAL_SECONDS,
+                )
 
         if not registration_succeeded:
             log.warning(
-                "No successful registration "
-                "within the booking window. "
+                "No successful registration or "
+                "waiting-list request after %s attempts. "
                 "Last response: %s",
+                MAX_ATTEMPTS_PER_LESSON,
                 last_error or "none",
             )
 
@@ -943,7 +1012,7 @@ def main():
     parser.add_argument(
         "--days",
         type=int,
-        default=3,
+        default=7,
         help=(
             "Aantal dagen vooruit controleren."
         ),
@@ -952,7 +1021,7 @@ def main():
     parser.add_argument(
         "--max-signups",
         type=int,
-        default=5,
+        default=6,
         help=(
             "Maximaal aantal geslaagde "
             "inschrijvingen per workflow-run."
@@ -965,61 +1034,4 @@ def main():
         "SPORTBIT_USERNAME"
     )
 
-    password = os.environ.get(
-        "SPORTBIT_PASSWORD"
-    )
-
-    if not username or not password:
-        log.error(
-            "SPORTBIT_USERNAME en "
-            "SPORTBIT_PASSWORD ontbreken."
-        )
-
-        sys.exit(2)
-
-    if (
-        arguments.days < 0
-        or arguments.days > 14
-    ):
-        log.error(
-            "--days moet tussen 0 en 14 liggen."
-        )
-
-        sys.exit(2)
-
-    if (
-        arguments.max_signups < 1
-        or arguments.max_signups > 6
-    ):
-        log.error(
-            "--max-signups moet tussen "
-            "1 en 6 liggen."
-        )
-
-        sys.exit(2)
-
-    if arguments.live:
-        log.warning(
-            "LIVE MODE enabled."
-        )
-
-    else:
-        log.info(
-            "DRY RUN enabled."
-        )
-
-    exit_code = run(
-        username=username,
-        password=password,
-        dry_run=not arguments.live,
-        days_ahead=arguments.days,
-        max_signups=arguments.max_signups,
-    )
-
-    sys.exit(
-        exit_code
-    )
-
-
-if __name__ == "__main__":
-    main()
+    password =
