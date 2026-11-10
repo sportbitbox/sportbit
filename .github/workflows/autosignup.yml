@@ -4,24 +4,29 @@ on:
   schedule:
 
     # Maandag WOD 07:00
-    - cron: "55 4 * * 6"
-    - cron: "55 5 * * 6"
+    # Inschrijving opent zaterdag 07:00 NL
+    - cron: "57 4 * * 6"
+    - cron: "57 5 * * 6"
 
     # Dinsdag Power 06:00
-    - cron: "55 3 * * 0"
-    - cron: "55 4 * * 0"
+    # Inschrijving opent zondag 06:00 NL
+    - cron: "57 3 * * 0"
+    - cron: "57 4 * * 0"
 
     # Woensdag WOD 06:00
-    - cron: "55 3 * * 1"
-    - cron: "55 4 * * 1"
+    # Inschrijving opent maandag 06:00 NL
+    - cron: "57 3 * * 1"
+    - cron: "57 4 * * 1"
 
     # Donderdag Power 07:00
-    - cron: "55 4 * * 2"
-    - cron: "55 5 * * 2"
+    # Inschrijving opent dinsdag 07:00 NL
+    - cron: "57 4 * * 2"
+    - cron: "57 5 * * 2"
 
     # Zaterdag Power + Buddy Workout 09:15
-    - cron: "10 7 * * 4"
-    - cron: "10 8 * * 4"
+    # Inschrijving opent donderdag 09:15 NL
+    - cron: "12 7 * * 4"
+    - cron: "12 8 * * 4"
 
   workflow_dispatch:
 
@@ -52,4 +57,7 @@ jobs:
         env:
           SPORTBIT_USERNAME: ${{ secrets.SPORTBIT_USERNAME }}
           SPORTBIT_PASSWORD: ${{ secrets.SPORTBIT_PASSWORD }}
-        run: python autosignup.py --live --days 7 --max-signups 6
+        run: |
+          echo "=== START SPORTBIT ==="
+          python -u autosignup.py --live --days 7 --max-signups 6
+          echo "=== EINDE SPORTBIT ==="
